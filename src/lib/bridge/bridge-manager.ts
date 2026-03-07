@@ -592,10 +592,9 @@ async function handleMessage(
     // stale ID so the next message starts fresh instead of retrying a broken resume.
     if (binding.id) {
       try {
-        if (result.sdkSessionId && !result.hasError) {
-          store.updateChannelBinding(binding.id, { sdkSessionId: result.sdkSessionId });
-        } else if (result.hasError) {
-          store.updateChannelBinding(binding.id, { sdkSessionId: '' });
+        const update = computeSdkSessionUpdate(result.sdkSessionId, result.hasError);
+        if (update !== null) {
+          store.updateChannelBinding(binding.id, { sdkSessionId: update });
         }
       } catch { /* best effort */ }
     }
@@ -825,3 +824,33 @@ async function handleCommand(
     });
   }
 }
+
+// ── SDK Session Update Logic ─────────────────────────────────
+
+/**
+ * Compute the sdkSessionId value to persist after a conversation result.
+ * Returns the new value to write, or null if no update is needed.
+ *
+ * Rules:
+ * - If result has sdkSessionId AND no error → save the new ID
+ * - If result has error (regardless of sdkSessionId) → clear to empty string
+ * - Otherwise → no update needed
+ */
+export function computeSdkSessionUpdate(
+  sdkSessionId: string | null | undefined,
+  hasError: boolean,
+): string | null {
+  if (sdkSessionId && !hasError) {
+    return sdkSessionId;
+  }
+  if (hasError) {
+    return '';
+  }
+  return null;
+}
+
+// ── Test-only export ─────────────────────────────────────────
+// Exposed so integration tests can exercise handleMessage directly
+// without wiring up the full adapter loop.
+/** @internal */
+export const _testOnly = { handleMessage };

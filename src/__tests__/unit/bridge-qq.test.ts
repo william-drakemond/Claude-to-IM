@@ -511,9 +511,14 @@ describe('bridge-manager - image download failure reply', () => {
   beforeEach(() => {
     store = createMockStore();
     setupContext(store);
+    // Clean global bridge-manager state
+    delete (globalThis as Record<string, unknown>)['__bridge_manager__'];
   });
 
   it('replies to user when image-only message fails download', async () => {
+    // Import the real handleMessage from bridge-manager
+    const { _testOnly } = await import('../../lib/bridge/bridge-manager');
+
     const sentMessages: OutboundMessage[] = [];
     const adapter = createMockQQAdapter({
       sendFn: async (msg) => {
@@ -522,131 +527,72 @@ describe('bridge-manager - image download failure reply', () => {
       },
     });
 
-    // Simulate what bridge-manager handleMessage does when receiving
-    // an empty-text message with imageDownloadFailed raw data
-    // We import deliver to test the code path directly
-    const msg = {
+    // Call the REAL handleMessage with an image-download-failure message
+    await _testOnly.handleMessage(adapter, {
       messageId: 'img-msg-1',
       address: { channelType: 'qq' as const, chatId: 'user-1', userId: 'user-1' },
       text: '',
       timestamp: Date.now(),
       raw: { imageDownloadFailed: true, failedCount: 2 },
-    };
-
-    const rawText = msg.text.trim();
-    const hasAttachments = (msg as any).attachments !== undefined && (msg as any).attachments?.length > 0;
-
-    // This mimics the bridge-manager logic
-    if (!rawText && !hasAttachments) {
-      const rawData = msg.raw as { imageDownloadFailed?: boolean; failedCount?: number } | undefined;
-      if (rawData?.imageDownloadFailed) {
-        await deliver(adapter, {
-          address: msg.address,
-          text: `Failed to download ${rawData.failedCount ?? 1} image(s). Please try sending again.`,
-          parseMode: 'plain',
-          replyToMessageId: msg.messageId,
-        });
-      }
-    }
+    });
 
     assert.equal(sentMessages.length, 1);
     assert.ok(sentMessages[0].text.includes('Failed to download 2 image(s)'));
     assert.equal(sentMessages[0].replyToMessageId, 'img-msg-1');
   });
+
+  it('silently drops empty message without imageDownloadFailed flag', async () => {
+    const { _testOnly } = await import('../../lib/bridge/bridge-manager');
+
+    const sentMessages: OutboundMessage[] = [];
+    const adapter = createMockQQAdapter({
+      sendFn: async (msg) => {
+        sentMessages.push(msg);
+        return { ok: true, messageId: 'reply-1' };
+      },
+    });
+
+    await _testOnly.handleMessage(adapter, {
+      messageId: 'empty-msg',
+      address: { channelType: 'qq' as const, chatId: 'user-1', userId: 'user-1' },
+      text: '',
+      timestamp: Date.now(),
+    });
+
+    assert.equal(sentMessages.length, 0, 'Should not send anything for empty messages without failure flag');
+  });
 });
 
-// ── 9. bridge-manager sdkSessionId clearing via store mock ──────
+// ── 9. bridge-manager sdkSessionId update logic ─────────────────
 
-describe('bridge-manager - sdkSessionId update contract', () => {
-  it('updateChannelBinding clears sdkSessionId on error even with new sdkSessionId', () => {
-    // Verify the actual bridge-manager.ts logic by reading the source code pattern.
-    // The code at bridge-manager.ts lines 580-586 is:
-    //   if (result.sdkSessionId && !result.hasError) { save }
-    //   else if (result.hasError) { clear }
-    //
-    // This test verifies the contract: when both sdkSessionId AND hasError are set,
-    // the clear branch wins.
-
-    const bindingUpdates: Partial<{ sdkSessionId: string }>[] = [];
-    const mockUpdateBinding = (_id: string, updates: Partial<{ sdkSessionId: string }>) => {
-      bindingUpdates.push(updates);
-    };
-
-    // Scenario 1: error with sdkSessionId — should clear
-    const result1 = { sdkSessionId: 'new-sdk', hasError: true };
-    if (result1.sdkSessionId && !result1.hasError) {
-      mockUpdateBinding('b1', { sdkSessionId: result1.sdkSessionId });
-    } else if (result1.hasError) {
-      mockUpdateBinding('b1', { sdkSessionId: '' });
-    }
-
-    // Scenario 2: no error with sdkSessionId — should save
-    const result2 = { sdkSessionId: 'new-sdk-2', hasError: false };
-    if (result2.sdkSessionId && !result2.hasError) {
-      mockUpdateBinding('b2', { sdkSessionId: result2.sdkSessionId });
-    } else if (result2.hasError) {
-      mockUpdateBinding('b2', { sdkSessionId: '' });
-    }
-
-    // Scenario 3: error without sdkSessionId — should still clear
-    const result3 = { sdkSessionId: null as string | null, hasError: true };
-    if (result3.sdkSessionId && !result3.hasError) {
-      mockUpdateBinding('b3', { sdkSessionId: result3.sdkSessionId });
-    } else if (result3.hasError) {
-      mockUpdateBinding('b3', { sdkSessionId: '' });
-    }
-
-    assert.equal(bindingUpdates.length, 3);
-    assert.equal(bindingUpdates[0].sdkSessionId, '', 'Error with SDK ID: should clear');
-    assert.equal(bindingUpdates[1].sdkSessionId, 'new-sdk-2', 'No error: should save');
-    assert.equal(bindingUpdates[2].sdkSessionId, '', 'Error without SDK ID: should clear');
+describe('bridge-manager - computeSdkSessionUpdate', () => {
+  it('saves sdkSessionId when no error', async () => {
+    const { computeSdkSessionUpdate } = await import('../../lib/bridge/bridge-manager');
+    const result = computeSdkSessionUpdate('new-sdk-123', false);
+    assert.equal(result, 'new-sdk-123');
   });
 
-  it('verifies bridge-manager source code matches expected pattern', async () => {
-    // Read the actual bridge-manager.ts source and verify the sdkSessionId logic
-    const fs = await import('fs');
-    const source = fs.readFileSync(
-      new URL('../../lib/bridge/bridge-manager.ts', import.meta.url),
-      'utf-8',
-    );
-
-    // The critical pattern: hasError always clears, regardless of sdkSessionId
-    assert.ok(
-      source.includes('result.sdkSessionId && !result.hasError'),
-      'Should check sdkSessionId && !hasError for save path',
-    );
-    assert.ok(
-      source.includes('else if (result.hasError)'),
-      'Should have unconditional hasError clear path',
-    );
-    // Verify it does NOT have the old pattern that only cleared when binding had existing sdkSessionId
-    assert.ok(
-      !source.includes('result.hasError && binding.sdkSessionId'),
-      'Should NOT conditionally check binding.sdkSessionId for clear',
-    );
+  it('clears sdkSessionId on error even when sdkSessionId is present', async () => {
+    const { computeSdkSessionUpdate } = await import('../../lib/bridge/bridge-manager');
+    const result = computeSdkSessionUpdate('new-sdk-123', true);
+    assert.equal(result, '', 'Error with SDK ID: should clear');
   });
 
-  it('verifies replyToMessageId is passed in all response paths', async () => {
-    const fs = await import('fs');
-    const source = fs.readFileSync(
-      new URL('../../lib/bridge/bridge-manager.ts', import.meta.url),
-      'utf-8',
-    );
+  it('clears sdkSessionId on error even without sdkSessionId', async () => {
+    const { computeSdkSessionUpdate } = await import('../../lib/bridge/bridge-manager');
+    const result = computeSdkSessionUpdate(null, true);
+    assert.equal(result, '', 'Error without SDK ID: should clear');
+  });
 
-    // Normal response path
-    assert.ok(
-      source.includes('deliverResponse(adapter, msg.address, result.responseText, binding.codepilotSessionId, msg.messageId)'),
-      'deliverResponse should receive msg.messageId',
-    );
-    // Error response path
-    assert.ok(
-      source.includes('replyToMessageId: msg.messageId,'),
-      'Error response should include replyToMessageId',
-    );
-    // Command response path
-    assert.ok(
-      /deliver\(adapter,\s*\{[^}]*replyToMessageId:\s*msg\.messageId/s.test(source),
-      'Command deliver should include replyToMessageId',
-    );
+  it('returns null (no update) when no error and no sdkSessionId', async () => {
+    const { computeSdkSessionUpdate } = await import('../../lib/bridge/bridge-manager');
+    const result = computeSdkSessionUpdate(null, false);
+    assert.equal(result, null, 'No error and no SDK ID: no update needed');
+  });
+
+  it('returns null for empty string sdkSessionId without error', async () => {
+    const { computeSdkSessionUpdate } = await import('../../lib/bridge/bridge-manager');
+    const result = computeSdkSessionUpdate('', false);
+    assert.equal(result, null, 'Empty SDK ID without error: no update needed');
   });
 });

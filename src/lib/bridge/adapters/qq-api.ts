@@ -39,6 +39,7 @@ export async function getAccessToken(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ appId, clientSecret }),
+    signal: AbortSignal.timeout(10_000),
   });
 
   if (!res.ok) {
@@ -71,6 +72,7 @@ export function clearTokenCache(): void {
 export async function getGatewayUrl(accessToken: string): Promise<string> {
   const res = await fetch(`${API_BASE}/gateway`, {
     headers: { Authorization: `QQBot ${accessToken}` },
+    signal: AbortSignal.timeout(10_000),
   });
 
   if (!res.ok) {
@@ -206,6 +208,7 @@ export async function sendPrivateMessage(
           msg_id: msgId,
           msg_seq: msgSeq,
         }),
+        signal: AbortSignal.timeout(15_000),
       },
     );
 
