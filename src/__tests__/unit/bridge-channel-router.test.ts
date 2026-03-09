@@ -93,6 +93,7 @@ function createMockStore(): BridgeStore & { bindings: Map<string, ChannelBinding
     insertPermissionLink() {},
     getPermissionLink() { return null; },
     markPermissionLinkResolved() { return false; },
+    listPendingPermissionLinksByChat() { return []; },
     getChannelOffset() { return '0'; },
     setChannelOffset() {},
   };

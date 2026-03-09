@@ -54,6 +54,9 @@ function createMockStore() {
       link.resolved = true;
       return true;
     },
+    listPendingPermissionLinksByChat: (chatId: string) => {
+      return [...links.values()].filter(l => l.chatId === chatId && !l.resolved);
+    },
     getChannelOffset: () => '0',
     setChannelOffset: () => {},
   };

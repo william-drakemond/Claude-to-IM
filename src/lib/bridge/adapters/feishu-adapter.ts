@@ -384,12 +384,17 @@ export class FeishuAdapter extends BaseChannelAdapter {
       return btn.text;
     });
 
-    // Schema 2.0 card with markdown — permission info + copyable commands
+    // Schema 2.0 card with markdown — permission info + shortcut/command options
     const cardContent = [
       text,
       '',
       '---',
-      '**Reply with one of these commands:**',
+      '**Reply:**',
+      '`1` - Allow once',
+      '`2` - Allow session',
+      '`3` - Deny',
+      '',
+      'Or use full commands:',
       ...permCommands,
     ].join('\n');
 
@@ -432,7 +437,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       }
       return btn.text;
     });
-    const fallbackText = text + '\n\nReply with:\n' + plainCommands.join('\n');
+    const fallbackText = text + '\n\nReply:\n1 - Allow once\n2 - Allow session\n3 - Deny\n\nOr use full command:\n' + plainCommands.join('\n');
 
     try {
       const res = await this.restClient.im.message.create({

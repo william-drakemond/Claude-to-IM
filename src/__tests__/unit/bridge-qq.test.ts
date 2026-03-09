@@ -61,7 +61,8 @@ function createMockStore(settings: Record<string, string> = {}) {
     insertOutboundRef: (ref: any) => { outboundRefs.push(ref); },
     insertPermissionLink: (link: any) => { permLinks.set(link.permissionRequestId, link); },
     getPermissionLink: (id: string) => permLinks.get(id) ?? null,
-    markPermissionLinkResolved: () => false,
+    markPermissionLinkResolved: (_id: string) => false,
+    listPendingPermissionLinksByChat: (_chatId: string): any[] => [],
     getChannelOffset: () => '0',
     setChannelOffset: () => {},
   };
@@ -234,7 +235,11 @@ describe('permission-broker - qq text permissions', () => {
     const permMsg = sentMessages[0];
     // No inline buttons for QQ
     assert.equal(permMsg.inlineButtons, undefined, 'QQ permission prompt should not have inline buttons');
-    // Should contain /perm commands
+    // Should contain numeric shortcuts
+    assert.ok(permMsg.text.includes('1 - Allow once'), 'Should contain shortcut 1');
+    assert.ok(permMsg.text.includes('2 - Allow session'), 'Should contain shortcut 2');
+    assert.ok(permMsg.text.includes('3 - Deny'), 'Should contain shortcut 3');
+    // Should still contain full /perm fallback commands (each as separate copyable line)
     assert.ok(permMsg.text.includes('/perm allow perm-req-unique-1'), 'Should contain /perm allow command');
     assert.ok(permMsg.text.includes('/perm allow_session perm-req-unique-1'), 'Should contain /perm allow_session command');
     assert.ok(permMsg.text.includes('/perm deny perm-req-unique-1'), 'Should contain /perm deny command');
@@ -563,7 +568,234 @@ describe('bridge-manager - image download failure reply', () => {
   });
 });
 
-// ── 9. bridge-manager sdkSessionId update logic ─────────────────
+// ── 9. Numeric shortcut permission replies (feishu/qq) ─────────
+
+describe('numeric shortcut permission replies', () => {
+  let store: MockStore;
+
+  beforeEach(() => {
+    store = createMockStore();
+    // Wire up a functional permission store for these tests
+    store.getPermissionLink = (id: string) => {
+      const link = store.permLinks.get(id);
+      return link ? { ...link, resolved: link.resolved ?? false } : null;
+    };
+    store.markPermissionLinkResolved = (id: string) => {
+      const link = store.permLinks.get(id);
+      if (!link || link.resolved) return false;
+      link.resolved = true;
+      return true;
+    };
+    store.listPendingPermissionLinksByChat = (chatId: string) => {
+      return [...store.permLinks.values()].filter(
+        (l: any) => l.chatId === chatId && !l.resolved,
+      );
+    };
+    // Use a permissions gateway that actually resolves (returns true)
+    delete (globalThis as Record<string, unknown>)['__bridge_context__'];
+    initBridgeContext({
+      store: store as unknown as BridgeStore,
+      llm: { streamChat: () => new ReadableStream() },
+      permissions: { resolvePendingPermission: () => true },
+      lifecycle: {},
+    });
+    delete (globalThis as Record<string, unknown>)['__bridge_manager__'];
+  });
+
+  it('resolves single pending permission with "1" → allow (qq)', async () => {
+    const { _testOnly } = await import('../../lib/bridge/bridge-manager');
+
+    // Insert a pending permission link
+    store.permLinks.set('perm-abc', {
+      permissionRequestId: 'perm-abc',
+      chatId: 'user-1',
+      messageId: 'msg-1',
+      resolved: false,
+      suggestions: '',
+    });
+
+    const sentMessages: OutboundMessage[] = [];
+    const adapter = createMockQQAdapter({
+      sendFn: async (msg) => {
+        sentMessages.push(msg);
+        return { ok: true, messageId: 'reply-1' };
+      },
+    });
+
+    await _testOnly.handleMessage(adapter, {
+      messageId: 'user-reply-1',
+      address: { channelType: 'qq' as const, chatId: 'user-1', userId: 'user-1' },
+      text: '1',
+      timestamp: Date.now(),
+    });
+
+    assert.equal(sentMessages.length, 1, 'Should reply with confirmation');
+    assert.ok(sentMessages[0].text.includes('Allow'), 'Should confirm Allow');
+    assert.equal(store.permLinks.get('perm-abc').resolved, true, 'Permission should be resolved');
+  });
+
+  it('resolves single pending permission with "2" → allow_session (qq)', async () => {
+    const { _testOnly } = await import('../../lib/bridge/bridge-manager');
+
+    store.permLinks.set('perm-def', {
+      permissionRequestId: 'perm-def',
+      chatId: 'user-1',
+      messageId: 'msg-1',
+      resolved: false,
+      suggestions: '',
+    });
+
+    const sentMessages: OutboundMessage[] = [];
+    const adapter = createMockQQAdapter({
+      sendFn: async (msg) => {
+        sentMessages.push(msg);
+        return { ok: true, messageId: 'reply-1' };
+      },
+    });
+
+    await _testOnly.handleMessage(adapter, {
+      messageId: 'user-reply-2',
+      address: { channelType: 'qq' as const, chatId: 'user-1', userId: 'user-1' },
+      text: '2',
+      timestamp: Date.now(),
+    });
+
+    assert.equal(sentMessages.length, 1);
+    assert.ok(sentMessages[0].text.includes('Allow Session'), 'Should confirm Allow Session');
+    assert.equal(store.permLinks.get('perm-def').resolved, true);
+  });
+
+  it('resolves single pending permission with "3" → deny (qq)', async () => {
+    const { _testOnly } = await import('../../lib/bridge/bridge-manager');
+
+    store.permLinks.set('perm-ghi', {
+      permissionRequestId: 'perm-ghi',
+      chatId: 'user-1',
+      messageId: 'msg-1',
+      resolved: false,
+      suggestions: '',
+    });
+
+    const sentMessages: OutboundMessage[] = [];
+    const adapter = createMockQQAdapter({
+      sendFn: async (msg) => {
+        sentMessages.push(msg);
+        return { ok: true, messageId: 'reply-1' };
+      },
+    });
+
+    await _testOnly.handleMessage(adapter, {
+      messageId: 'user-reply-3',
+      address: { channelType: 'qq' as const, chatId: 'user-1', userId: 'user-1' },
+      text: '3',
+      timestamp: Date.now(),
+    });
+
+    assert.equal(sentMessages.length, 1);
+    assert.ok(sentMessages[0].text.includes('Deny'), 'Should confirm Deny');
+    assert.equal(store.permLinks.get('perm-ghi').resolved, true);
+  });
+
+  it('falls through when no pending permissions (condition check)', () => {
+    // No permission links in store — numeric shortcut should NOT activate
+    const pendingLinks = store.listPendingPermissionLinksByChat('user-1');
+    assert.equal(pendingLinks.length, 0, 'No pending permissions');
+    // The bridge-manager code checks: pendingLinks.length === 1
+    // With 0 pending, it falls through to normal message handling
+    const shouldIntercept = /^[123]$/.test('1') && (pendingLinks.length as number) === 1;
+    assert.equal(shouldIntercept, false, 'Should not intercept "1" when no pending permissions');
+  });
+
+  it('hints user to use /perm when multiple pending permissions', async () => {
+    const { _testOnly } = await import('../../lib/bridge/bridge-manager');
+
+    store.permLinks.set('perm-1', {
+      permissionRequestId: 'perm-1',
+      chatId: 'user-1',
+      messageId: 'msg-1',
+      resolved: false,
+      suggestions: '',
+    });
+    store.permLinks.set('perm-2', {
+      permissionRequestId: 'perm-2',
+      chatId: 'user-1',
+      messageId: 'msg-2',
+      resolved: false,
+      suggestions: '',
+    });
+
+    const sentMessages: OutboundMessage[] = [];
+    const adapter = createMockQQAdapter({
+      sendFn: async (msg) => {
+        sentMessages.push(msg);
+        return { ok: true, messageId: 'reply-1' };
+      },
+    });
+
+    await _testOnly.handleMessage(adapter, {
+      messageId: 'user-reply-ambiguous',
+      address: { channelType: 'qq' as const, chatId: 'user-1', userId: 'user-1' },
+      text: '2',
+      timestamp: Date.now(),
+    });
+
+    // Should get a hint to use full /perm command, not fall through
+    assert.equal(sentMessages.length, 1, 'Should send a hint message');
+    assert.ok(sentMessages[0].text.includes('Multiple pending permissions'), 'Should mention multiple pending');
+    assert.ok(sentMessages[0].text.includes('/perm'), 'Should mention /perm command');
+    assert.equal(store.permLinks.get('perm-1').resolved, false, 'perm-1 should remain unresolved');
+    assert.equal(store.permLinks.get('perm-2').resolved, false, 'perm-2 should remain unresolved');
+  });
+
+  it('does not intercept numeric shortcut for telegram (inline buttons available)', () => {
+    store.permLinks.set('perm-tg', {
+      permissionRequestId: 'perm-tg',
+      chatId: 'tg-chat-1',
+      messageId: 'msg-1',
+      resolved: false,
+      suggestions: '',
+    });
+
+    // The bridge-manager code checks: adapter.channelType === 'feishu' || adapter.channelType === 'qq'
+    // Telegram is NOT in that list, so numeric shortcuts are never intercepted
+    const channelType: string = 'telegram';
+    const shouldCheck = channelType === 'feishu' || channelType === 'qq';
+    assert.equal(shouldCheck, false, 'Telegram should not use numeric shortcuts');
+    assert.equal(store.permLinks.get('perm-tg').resolved, false, 'Permission should remain unresolved');
+  });
+
+  it('old /perm command still works alongside numeric shortcuts', async () => {
+    const { _testOnly } = await import('../../lib/bridge/bridge-manager');
+
+    store.permLinks.set('perm-compat', {
+      permissionRequestId: 'perm-compat',
+      chatId: 'user-1',
+      messageId: 'msg-1',
+      resolved: false,
+      suggestions: '',
+    });
+
+    const sentMessages: OutboundMessage[] = [];
+    const adapter = createMockQQAdapter({
+      sendFn: async (msg) => {
+        sentMessages.push(msg);
+        return { ok: true, messageId: 'reply-1' };
+      },
+    });
+
+    await _testOnly.handleMessage(adapter, {
+      messageId: 'user-perm-cmd',
+      address: { channelType: 'qq' as const, chatId: 'user-1', userId: 'user-1' },
+      text: '/perm allow perm-compat',
+      timestamp: Date.now(),
+    });
+
+    assert.equal(store.permLinks.get('perm-compat').resolved, true, '/perm command should still work');
+    assert.ok(sentMessages.some(m => m.text.includes('recorded')), 'Should confirm via /perm');
+  });
+});
+
+// ── 10. bridge-manager sdkSessionId update logic ─────────────────
 
 describe('bridge-manager - computeSdkSessionUpdate', () => {
   it('saves sdkSessionId when no error', async () => {

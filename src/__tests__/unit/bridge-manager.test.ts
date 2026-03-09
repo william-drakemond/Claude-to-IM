@@ -162,6 +162,7 @@ function createMinimalStore(settings: Record<string, string> = {}): BridgeStore 
     insertPermissionLink: () => {},
     getPermissionLink: () => null,
     markPermissionLinkResolved: () => false,
+    listPendingPermissionLinksByChat: () => [],
     getChannelOffset: () => '0',
     setChannelOffset: () => {},
   };

@@ -461,6 +461,55 @@ async function handleMessage(
     return;
   }
 
+  // ── Numeric shortcut for permission replies (feishu/qq only) ──
+  // On mobile, typing `/perm allow <uuid>` is painful.
+  // If the user sends "1", "2", or "3" and there is exactly one pending
+  // permission for this chat, map it: 1→allow, 2→allow_session, 3→deny.
+  if (
+    (adapter.channelType === 'feishu' || adapter.channelType === 'qq') &&
+    /^[123]$/.test(rawText)
+  ) {
+    const pendingLinks = store.listPendingPermissionLinksByChat(msg.address.chatId);
+    if (pendingLinks.length === 1) {
+      const actionMap: Record<string, string> = { '1': 'allow', '2': 'allow_session', '3': 'deny' };
+      const action = actionMap[rawText];
+      const permId = pendingLinks[0].permissionRequestId;
+      const callbackData = `perm:${action}:${permId}`;
+      const handled = broker.handlePermissionCallback(callbackData, msg.address.chatId);
+      const label = rawText === '1' ? 'Allow' : rawText === '2' ? 'Allow Session' : 'Deny';
+      if (handled) {
+        await deliver(adapter, {
+          address: msg.address,
+          text: `${label}: recorded.`,
+          parseMode: 'plain',
+          replyToMessageId: msg.messageId,
+        });
+      } else {
+        await deliver(adapter, {
+          address: msg.address,
+          text: `Permission not found or already resolved.`,
+          parseMode: 'plain',
+          replyToMessageId: msg.messageId,
+        });
+      }
+      ack();
+      return;
+    }
+    if (pendingLinks.length > 1) {
+      // Multiple pending permissions — numeric shortcut is ambiguous.
+      // Tell the user to use the full /perm command instead.
+      await deliver(adapter, {
+        address: msg.address,
+        text: `Multiple pending permissions (${pendingLinks.length}). Please use the full command:\n/perm allow|allow_session|deny <id>`,
+        parseMode: 'plain',
+        replyToMessageId: msg.messageId,
+      });
+      ack();
+      return;
+    }
+    // pendingLinks.length === 0: no pending permissions, fall through as normal message
+  }
+
   // Check for IM commands (before sanitization — commands are validated individually)
   if (rawText.startsWith('/')) {
     await handleCommand(adapter, msg, rawText);
@@ -807,6 +856,7 @@ async function handleCommand(
         '/sessions - List recent sessions',
         '/stop - Stop current session',
         '/perm allow|allow_session|deny &lt;id&gt; - Respond to permission request',
+        '1/2/3 - Quick permission reply (Feishu/QQ, single pending)',
         '/help - Show this help',
       ].join('\n');
       break;

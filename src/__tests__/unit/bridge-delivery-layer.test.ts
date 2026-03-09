@@ -73,6 +73,7 @@ function createMockStore() {
     insertPermissionLink: () => {},
     getPermissionLink: () => null,
     markPermissionLinkResolved: () => false,
+    listPendingPermissionLinksByChat: () => [],
     getChannelOffset: () => '0',
     setChannelOffset: () => {},
   };
