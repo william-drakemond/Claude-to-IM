@@ -404,8 +404,17 @@ export class SlackAdapter extends BaseChannelAdapter {
     // Authorization check
     if (!this.isAuthorized(userId, chatId)) return;
 
-    // Extract text content
+    // Channel type detection: DMs have channel type 'im' (starts with D),
+    // channels start with C, groups with G. For non-DM channels, require
+    // @mention of the bot to avoid responding to every message.
+    const isDM = chatId.startsWith('D');
     let text = message.text || '';
+
+    if (!isDM && this.botUserId) {
+      // In channels/groups: only respond if bot is @mentioned
+      const mentionPattern = new RegExp(`<@${this.botUserId}>`);
+      if (!mentionPattern.test(text)) return;
+    }
 
     // Strip bot mention from text (e.g. <@U12345>)
     if (this.botUserId) {
