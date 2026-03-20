@@ -2,23 +2,23 @@
 
 English | [中文](README.zh-CN.md)
 
-Claude-to-IM is a host-agnostic bridge library that connects [Claude Code SDK](https://docs.anthropic.com/en/docs/claude-code/sdk) to IM platforms, allowing users to interact with Claude through Telegram, Discord, and Feishu (Lark).
+Claude-to-IM is a host-agnostic bridge library that connects [Claude Code SDK](https://docs.anthropic.com/en/docs/claude-code/sdk) to IM platforms, allowing users to interact with Claude through Telegram, Discord, Slack, and Feishu (Lark).
 
 This library handles all IM-side complexity — message routing, streaming previews, permission approval flows, Markdown rendering, chunking, retry, rate limiting — while delegating persistence, LLM calls, and permission resolution to the host application through a set of dependency injection interfaces.
 
 ## Out-of-the-Box Solution
 
-If you want a ready-to-use desktop application without writing any integration code, check out [CodePilot](https://github.com/op7418/CodePilot) — a desktop GUI client for Claude Code with built-in IM bridge support. CodePilot implements all the host interfaces for you and provides a complete UI for managing sessions, settings, and bridge connections.
+If you want a ready-to-use desktop application without writing any integration code, check out [CodePilot](https://github.com/william-drakemond/CodePilot) — a desktop GUI client for Claude Code with built-in IM bridge support. CodePilot implements all the host interfaces for you and provides a complete UI for managing sessions, settings, and bridge connections.
 
 Claude-to-IM was extracted from CodePilot as a standalone library for developers who want to embed the IM bridge capability in their own applications.
 
 ## Features
 
-- **Multi-platform adapters**: Telegram (long polling), Discord (Gateway WebSocket), Feishu/Lark (WSClient)
+- **Multi-platform adapters**: Telegram (long polling), Discord (Gateway WebSocket), Slack (Socket Mode), Feishu/Lark (WSClient)
 - **Streaming previews**: Real-time response drafts via message editing, with per-platform throttling
 - **Permission management**: Interactive inline buttons for Claude Code tool approvals (allow / deny / allow for session)
 - **Session binding**: Each IM chat maps to a persistent conversation session with working directory and model settings
-- **Markdown rendering**: Platform-native formatting — HTML for Telegram, Discord-flavored Markdown, Feishu rich text cards
+- **Markdown rendering**: Platform-native formatting — HTML for Telegram, Discord-flavored Markdown, Slack mrkdwn, Feishu rich text cards
 - **Reliable delivery**: Auto-chunking at platform limits, retry with exponential backoff, HTML fallback on parse errors, message deduplication
 - **Security**: Input validation, token bucket rate limiting (20 msg/min per chat), user authorization whitelists, full audit logging
 - **Host-agnostic**: All host dependencies abstracted via 4 DI interfaces — no database driver, no LLM client, no framework lock-in
@@ -26,7 +26,7 @@ Claude-to-IM was extracted from CodePilot as a standalone library for developers
 ## Architecture
 
 ```
-IM Platform (Telegram / Discord / Feishu)
+IM Platform (Telegram / Discord / Slack / Feishu)
         |
         | InboundMessage
         v
@@ -59,7 +59,7 @@ npm install claude-to-im
 Or clone this repo and install dependencies:
 
 ```bash
-git clone https://github.com/op7418/Claude-to-IM.git
+git clone https://github.com/william-drakemond/Claude-to-IM.git
 cd Claude-to-IM
 npm install
 ```
@@ -121,7 +121,7 @@ All settings are read through `BridgeStore.getSetting(key)`. Your host applicati
 | `bridge_default_cwd` | Default working directory for new sessions | `$HOME` |
 | `bridge_model` | Default Claude model | Host decides |
 
-Replace `{adapter}` with `telegram`, `discord`, or `feishu`.
+Replace `{adapter}` with `telegram`, `discord`, `slack`, or `feishu`.
 
 ## Limitations
 
@@ -153,6 +153,7 @@ The bridge uses a session lock mechanism (`acquireSessionLock` / `renewSessionLo
 You still need to create bots on each platform and obtain tokens:
 - **Telegram**: Create a bot via [@BotFather](https://t.me/BotFather)
 - **Discord**: Create an application in the [Developer Portal](https://discord.com/developers/applications) with Message Content Intent enabled
+- **Slack**: Create an app at [Slack API](https://api.slack.com/apps) with Socket Mode enabled
 - **Feishu**: Create an app in the [Developer Console](https://open.feishu.cn/app) with IM permissions
 
 ## Documentation
@@ -182,6 +183,7 @@ src/
     adapters/
       telegram-adapter.ts   # Telegram Bot API long polling
       discord-adapter.ts    # Discord.js Gateway WebSocket
+      slack-adapter.ts      # Slack Bolt Socket Mode
       feishu-adapter.ts     # Feishu/Lark WSClient
       telegram-media.ts     # Telegram file download/attachment handling
       telegram-utils.ts     # Telegram API helpers
@@ -191,6 +193,7 @@ src/
       render.ts             # Generic IR -> platform string renderer
       telegram.ts           # Markdown -> Telegram HTML
       discord.ts            # Markdown -> Discord-flavored Markdown
+      slack.ts              # Markdown -> Slack mrkdwn
       feishu.ts             # Markdown -> Feishu rich text / cards
     security/
       validators.ts         # Input validation (path traversal, injection, sanitization)
