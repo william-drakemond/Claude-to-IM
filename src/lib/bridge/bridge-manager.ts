@@ -18,6 +18,7 @@ import * as broker from './permission-broker.js';
 import { deliver, deliverRendered } from './delivery-layer.js';
 import { markdownToTelegramChunks } from './markdown/telegram.js';
 import { markdownToDiscordChunks } from './markdown/discord.js';
+import { markdownToSlackChunks } from './markdown/slack.js';
 import { getBridgeContext } from './context.js';
 import { escapeHtml } from './adapters/telegram-utils.js';
 import {
@@ -47,6 +48,7 @@ interface StreamConfig {
 const STREAM_DEFAULTS: Record<string, StreamConfig> = {
   telegram: { intervalMs: 700, minDeltaChars: 20, maxChars: 3900 },
   discord: { intervalMs: 1500, minDeltaChars: 40, maxChars: 1900 },
+  slack: { intervalMs: 1200, minDeltaChars: 40, maxChars: 38000 },
 };
 
 function getStreamConfig(channelType = 'telegram'): StreamConfig {
@@ -126,6 +128,20 @@ async function deliverResponse(
   if (adapter.channelType === 'discord') {
     // Discord: native markdown, chunk at 2000 chars with fence repair
     const chunks = markdownToDiscordChunks(responseText, 2000);
+    for (let i = 0; i < chunks.length; i++) {
+      const result = await deliver(adapter, {
+        address,
+        text: chunks[i].text,
+        parseMode: 'Markdown',
+        replyToMessageId,
+      }, { sessionId });
+      if (!result.ok) return result;
+    }
+    return { ok: true };
+  }
+  if (adapter.channelType === 'slack') {
+    // Slack: mrkdwn format, chunk at 40000 chars with fence repair
+    const chunks = markdownToSlackChunks(responseText, 40000);
     for (let i = 0; i < chunks.length; i++) {
       const result = await deliver(adapter, {
         address,
