@@ -334,14 +334,10 @@ export class SlackAdapter extends BaseChannelAdapter {
   }
 
   endPreview(chatId: string, _draftId: number): void {
-    const ts = this.previewMessages.get(chatId);
-    if (ts && this.app) {
-      // Delete the preview message — the final response replaces it
-      this.app.client.chat.delete({
-        channel: chatId,
-        ts,
-      }).catch(() => {});
-    }
+    // Don't delete the preview message — keep it as the visible response.
+    // The bridge-manager sends a final deliverResponse after endPreview,
+    // but in Slack the edit-based preview already contains the full text,
+    // so we just clear the tracking state without deleting the message.
     this.previewMessages.delete(chatId);
   }
 
