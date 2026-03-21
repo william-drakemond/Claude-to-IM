@@ -223,8 +223,24 @@ export class SlackAdapter extends BaseChannelAdapter {
         payload.thread_ts = message.replyToMessageId;
       }
 
+      // If a streaming preview exists and this is a plain-text send (no buttons),
+      // update the preview in place instead of posting a new message.
+      // This prevents double-message flicker: without this, the final send posts a
+      // new message while the stale preview stays visible.
+      const hasButtons = message.inlineButtons && message.inlineButtons.length > 0;
+      const previewTs = !hasButtons ? this.previewMessages.get(message.address.chatId) : undefined;
+      if (previewTs) {
+        this.previewMessages.delete(message.address.chatId); // prevent endPreview from acting on it
+        await this.app.client.chat.update({
+          channel: message.address.chatId,
+          ts: previewTs,
+          text: text.slice(0, SLACK_CHAR_LIMIT),
+        });
+        return { ok: true, messageId: previewTs };
+      }
+
       // Build inline buttons as Slack Block Kit
-      if (message.inlineButtons && message.inlineButtons.length > 0) {
+      if (hasButtons && message.inlineButtons) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const blocks: any[] = [];
 
