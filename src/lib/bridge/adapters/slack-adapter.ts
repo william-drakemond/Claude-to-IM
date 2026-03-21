@@ -402,8 +402,9 @@ export class SlackAdapter extends BaseChannelAdapter {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private async handleMessage(message: any, context: any): Promise<void> {
-    // Filter out bot messages, subtypes (edits, joins, etc.)
-    if (message.subtype) return;
+    // Filter out bot messages and unwanted subtypes (edits, joins, etc.)
+    // Allow 'file_share' through so image uploads are processed.
+    if (message.subtype && message.subtype !== 'file_share') return;
     if (message.bot_id) return;
     if (this.botUserId && message.user === this.botUserId) return;
 
